@@ -11,31 +11,38 @@ export const pool = new Pool({
 })
 
 // Database utility function that mimics Neon's sql template literal behavior
-export const sql = async (strings: TemplateStringsArray, ...values: any[]) => {
-  let query = ''
-  const params: any[] = []
+export const sql = (strings: TemplateStringsArray, ...values: any[]) => {
+  const query = strings.reduce((acc, str, i) => {
+    const value = values[i]
+    if (value === undefined) return acc + str
+    
+    // Use parameterized queries for safety
+    return acc + str + `$${i + 1}`
+  }, '')
   
-  for (let i = 0; i < strings.length; i++) {
-    query += strings[i]
-    if (i < values.length) {
-      params.push(values[i])
-      query += `$${params.length}`
-    }
-  }
-  
-  const result = await pool.query(query, params)
-  return result.rows
+  return pool.query(query, values)
 }
 
-// Database utility functions
+// Alternative query function for better compatibility
 export async function executeQuery(query: string, params: any[] = []) {
   try {
-    // For dynamic queries, we'll need to use a different approach
-    // This is kept for backward compatibility but should be avoided
-    throw new Error("Use template literals with sql`` instead of dynamic queries")
+    const result = await pool.query(query, params)
+    return result.rows
   } catch (error) {
     console.error("Database query error:", error)
     throw error
+  }
+}
+
+// Test database connection
+export async function testConnection() {
+  try {
+    const result = await pool.query('SELECT NOW()')
+    console.log('Database connected successfully:', result.rows[0])
+    return true
+  } catch (error) {
+    console.error('Database connection failed:', error)
+    return false
   }
 }
 
@@ -90,37 +97,28 @@ export const jobQueries = {
   },
 
   findById: async (id: string) => {
-    const result = await pool.query(`
-      SELECT j.*, u.name as posted_by_name 
-      FROM jobs j 
-      JOIN users u ON j.posted_by = u.id 
-      WHERE j.id = $1
-    `, [id])
+    const result = await pool.query('SELECT * FROM jobs WHERE id = $1', [id])
     return result.rows
   },
 
   create: async (job: any) => {
     const result = await pool.query(`
-      INSERT INTO jobs (title, description, location, job_type, salary_min, salary_max, status, posted_by) 
+      INSERT INTO jobs (title, description, location, job_type, salary_min, salary_max, status, posted_by)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
       RETURNING *
     `, [job.title, job.description, job.location, job.job_type, job.salary_min, job.salary_max, job.status, job.posted_by])
     return result.rows
   },
 
-  update: async (id: string, job: any) => {
-    const result = await pool.query(`
-      UPDATE jobs SET 
-        title = $1, 
-        description = $2, 
-        location = $3, 
-        job_type = $4, 
-        salary_min = $5, 
-        salary_max = $6, 
-        status = $7
-      WHERE id = $8 
-      RETURNING *
-    `, [job.title, job.description, job.location, job.job_type, job.salary_min, job.salary_max, job.status, id])
+  update: async (id: string, updates: any) => {
+    const fields = Object.keys(updates)
+    const values = Object.values(updates)
+    const setClause = fields.map((field, index) => `${field} = $${index + 1}`).join(', ')
+    
+    const result = await pool.query(
+      `UPDATE jobs SET ${setClause} WHERE id = $${fields.length + 1} RETURNING *`,
+      [...values, id]
+    )
     return result.rows
   },
 
@@ -129,45 +127,30 @@ export const jobQueries = {
     return result.rows
   },
 
-  getByEmployer: async (employerId: string) => {
-    const result = await pool.query('SELECT * FROM jobs WHERE posted_by = $1 ORDER BY created_at DESC', [employerId])
+  getByUser: async (userId: string) => {
+    const result = await pool.query('SELECT * FROM jobs WHERE posted_by = $1 ORDER BY created_at DESC', [userId])
     return result.rows
   },
 }
 
 // Application queries
 export const applicationQueries = {
-  create: async (application: { 
-    job_id: string; 
-    user_id: string; 
-    full_name?: string;
-    email?: string;
-    phone?: string;
-    cover_letter?: string;
-    resume_url?: string;
-    resume_filename?: string;
-  }) => {
+  getAll: async () => {
     const result = await pool.query(`
-      INSERT INTO applications (
-        job_id, user_id, full_name, email, phone, 
-        cover_letter, resume_url, resume_filename
-      ) 
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
-      RETURNING *
-    `, [
-      application.job_id, application.user_id, application.full_name, 
-      application.email, application.phone, application.cover_letter,
-      application.resume_url, application.resume_filename
-    ])
+      SELECT a.*, j.title as job_title, u.name as user_name 
+      FROM applications a 
+      JOIN jobs j ON a.job_id = j.id 
+      JOIN users u ON a.user_id = u.id 
+      ORDER BY a.applied_at DESC
+    `)
     return result.rows
   },
 
   getByUser: async (userId: string) => {
     const result = await pool.query(`
-      SELECT a.*, j.title as job_title, j.location, u.name as company_name 
+      SELECT a.*, j.title as job_title 
       FROM applications a 
       JOIN jobs j ON a.job_id = j.id 
-      JOIN users u ON j.posted_by = u.id 
       WHERE a.user_id = $1 
       ORDER BY a.applied_at DESC
     `, [userId])
@@ -176,7 +159,7 @@ export const applicationQueries = {
 
   getByJob: async (jobId: string) => {
     const result = await pool.query(`
-      SELECT a.*, u.name as applicant_name, u.email as applicant_email 
+      SELECT a.*, u.name as user_name, u.email as user_email 
       FROM applications a 
       JOIN users u ON a.user_id = u.id 
       WHERE a.job_id = $1 
@@ -185,8 +168,21 @@ export const applicationQueries = {
     return result.rows
   },
 
-  updateStatus: async (id: string, status: string) => {
-    const result = await pool.query('UPDATE applications SET status = $1 WHERE id = $2 RETURNING *', [status, id])
+  create: async (application: any) => {
+    const result = await pool.query(`
+      INSERT INTO applications (job_id, user_id, full_name, email, phone, cover_letter, resume_url, resume_filename)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) 
+      RETURNING *
+    `, [
+      application.job_id,
+      application.user_id,
+      application.full_name,
+      application.email,
+      application.phone,
+      application.cover_letter,
+      application.resume_url,
+      application.resume_filename
+    ])
     return result.rows
   },
 
@@ -198,15 +194,11 @@ export const applicationQueries = {
     return result.rows
   },
 
-  getAll: async () => {
-    const result = await pool.query(`
-      SELECT a.*, j.title as job_title, u.name as applicant_name, emp.name as employer_name 
-      FROM applications a 
-      JOIN jobs j ON a.job_id = j.id 
-      JOIN users u ON a.user_id = u.id 
-      JOIN users emp ON j.posted_by = emp.id 
-      ORDER BY a.applied_at DESC
-    `)
+  updateStatus: async (id: string, status: string) => {
+    const result = await pool.query(
+      'UPDATE applications SET status = $1 WHERE id = $2 RETURNING *',
+      [status, id]
+    )
     return result.rows
   },
 }

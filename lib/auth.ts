@@ -39,8 +39,12 @@ export function generateToken(user: User): string {
 
 export function verifyToken(token: string): any {
   try {
-    return jwt.verify(token, JWT_SECRET)
+    console.log('Backend - Verifying token with secret:', JWT_SECRET.substring(0, 10) + '...')
+    const decoded = jwt.verify(token, JWT_SECRET)
+    console.log('Backend - Token verification successful:', decoded)
+    return decoded
   } catch (error) {
+    console.error('Backend - Token verification failed:', error)
     throw new Error("Invalid token")
   }
 }
@@ -71,15 +75,21 @@ export async function authenticateUser(email: string, password: string): Promise
 export async function getUserFromToken(token: string): Promise<User | null> {
   try {
     const decoded = verifyToken(token)
+    console.log('Backend - Decoded token:', { id: decoded.id, email: decoded.email, role: decoded.role })
+    
     const users = await userQueries.findById(decoded.id)
+    console.log('Backend - Users found by ID:', users.length, users.length > 0 ? users[0].id : 'none')
 
     if (users.length === 0) {
+      console.log('Backend - No user found for ID:', decoded.id)
       return null
     }
 
     const { password: _, ...user } = users[0] as AuthUser
+    console.log('Backend - Returning user:', { id: user.id, email: user.email, role: user.role })
     return user
   } catch (error) {
+    console.error('Backend - getUserFromToken error:', error)
     return null
   }
 }

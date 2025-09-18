@@ -36,7 +36,7 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE TABLE IF NOT EXISTS applications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id UUID REFERENCES users(id) ON DELETE CASCADE, -- Made nullable for guest applications
     status application_status NOT NULL DEFAULT 'applied',
     full_name VARCHAR(255),
     email VARCHAR(255),
@@ -44,8 +44,8 @@ CREATE TABLE IF NOT EXISTS applications (
     cover_letter TEXT,
     resume_url VARCHAR(500),
     resume_filename VARCHAR(255),
-    applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    UNIQUE(job_id, user_id)
+    applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    -- Removed UNIQUE constraint to allow multiple guest applications
 );
 
 -- User Profiles table (Extended user information)

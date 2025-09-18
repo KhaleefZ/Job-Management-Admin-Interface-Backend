@@ -17,8 +17,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid email or password" }, { status: 401, headers: corsHeaders() })
     }
 
+    console.log('Backend - Login successful for user:', { id: user.id, email: user.email, role: user.role })
+
     // Generate token
     const token = generateToken(user)
+    console.log('Backend - Generated token for user ID:', user.id)
 
     return NextResponse.json(
       {
